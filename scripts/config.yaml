@@ -13,3 +13,11 @@ ordered: f
 minlen: 55
 klist: "21,33,55"
 skip_ec: ""
+
+# params for hmm filtering:
+bits: 0
+evalue: 1
+cov: 0
+
+# params for interval_finder.py
+interval: 5000

@@ -1,0 +1,240 @@
+sra_acc = config['accession']
+pfam = [config['pfam']]
+outdir = config['outdir']
+scripts = config['scripts']
+
+if config["all_cpu"] > 9:
+    split_list = [str(n).zfill(2) for n in range(1,int(config["all_cpu"])+1)]
+else:
+    split_list = list(range(1,int(config["all_cpu"])+1))
+
+rule all:
+    input: 
+        # expand("{accession}_1.fastq.gz", accession = sra_acc),
+        # expand("02_TRIMMED/QC_{accession}_R1.fastq.gz", accession = sra_acc),
+        # expand("03_ASSEMBLY/METASPADES_{accession}.scaffolds.fasta", accession = sra_acc),
+        # expand("split/METASPADES_{accession}.scaffolds.part-{num}.fasta", accession=sra_acc, num=[n for n in split_list]),
+        # expand("00_LOGS/04__split_files.{accession}.log", accession = sra_acc),
+        # expand("split/METASPADES_{accession}.scaffolds.part-{num}.faa", accession=sra_acc, num=[n for n in split_list]),
+        # expand("split/METASPADES_{accession}.scaffolds.part-{num}.{pfam}.txt", accession=sra_acc, num=[n for n in split_list], pfam=config['pfam']),
+        # expand("04_ANNOTATION/METASPADES_{accession}.scaffolds.{pfam}.tsv", accession=sra_acc, pfam=[n for n in pfam]),
+        # expand("04_ANNOTATION/METASPADES_{accession}.scaffolds.gff", accession=sra_acc),
+        expand(outdir+"{accession}/00_LOGS/{accession}.done", accession=sra_acc),
+
+rule get_fastq:
+    output:
+        r1 = "{accession}_1.fastq.gz",
+        r2 = "{accession}_2.fastq.gz",
+    log:
+        outdir+"{accession}/00_LOGS/01__get_fastq.{accession}.log"
+    params:
+        extra="--skip-technical"
+    threads: 12
+    wrapper:
+        "master/bio/sra-tools/fasterq-dump"
+
+rule adapter_and_quality_trim:
+    input:
+        r1 = "{accession}_1.fastq.gz",
+        r2 = "{accession}_2.fastq.gz",
+    output:
+        r1 = outdir+"{accession}/02_TRIMMED/QC_{accession}_R1.fastq.gz",
+        r2 = outdir+"{accession}/02_TRIMMED/QC_{accession}_R2.fastq.gz",
+        # log = SAVE + "00_LOGS/TRIM_MARKED_{sample}.err.txt",
+        # stdout = SAVE + "00_LOGS/TRIM_MARKED_{sample}.out.txt"
+    log:
+        outdir+"{accession}/00_LOGS/02__adapter_and_quality_trim.{accession}.log"
+    threads: 12
+    params:
+        java_ram = config["java_ram"],
+        refadpt = config["refadpt"],
+        ktrim= config["ktrim"],
+        k=config["k"],
+        mink=config["mink"],
+        hdist=config["hdist"],
+        qtrim=config["qtrim"],
+        trimq=config["trimq"],
+        pigz= config["pigz"],
+        unpigz= config["unpigz"],
+        overwrite= config["overwrite"],
+        ordered= config["ordered"],
+        minlen = config["minlen"],
+    resources:
+        mem_mb=2000
+    shell:
+        """
+        bbduk.sh {params.java_ram} -eoom in1={input.r1} in2={input.r2} out1={output.r1} out2={output.r2} ref={params.refadpt} threads={threads} ktrim={params.ktrim} k={params.k} mink={params.mink} hdist={params.hdist} tpe tbo qtrim={params.qtrim} trimq={params.trimq} pigz={params.pigz} unpigz={params.unpigz} overwrite={params.overwrite} ordered={params.ordered} minlen={params.minlen} 2>&1 | tee -a {log}
+        """
+
+rule run_metaspades:
+    input:
+        r1 = outdir+"{accession}/02_TRIMMED/QC_{accession}_R1.fastq.gz",
+        r2 = outdir+"{accession}/02_TRIMMED/QC_{accession}_R2.fastq.gz",
+    output:
+        contigs = outdir+"{accession}/03_ASSEMBLY/METASPADES_{accession}.contigs.fasta",
+        scaffolds = outdir+"{accession}/03_ASSEMBLY/METASPADES_{accession}.scaffolds.fasta",
+    params:
+        accession = "{accession}",
+        outdir = outdir+"{accession}/03_ASSEMBLY",
+        k = config['klist'],
+        skip_ec = config["skip_ec"],
+        mem_gb = config["mem_gb"],
+    log:
+        outdir+"{accession}/00_LOGS/03__metaspades.{accession}.log"
+    threads: config["all_cpu"]
+    # resources:
+    #     mem_mb = config["all_mem_mb"]
+    shell:
+        """
+        metaspades.py -1 {input.r1} -2 {input.r2} -o {params.outdir} -t {threads} -k {params.k} -m {params.mem_gb} {params.skip_ec} 2>&1 > {log}
+        sed 's/^>/>{params.accession}__/' {params.outdir}/contigs.fasta > {output.contigs}
+        sed 's/^>/>{params.accession}__/' {params.outdir}/scaffolds.fasta > {output.scaffolds}
+        """
+
+rule split_files:
+    input:
+        outdir+"{accession}/03_ASSEMBLY/METASPADES_{accession}.scaffolds.fasta",
+    output:
+        [outdir+"{{accession}}/split/METASPADES_{{accession}}.scaffolds.part-{num}.fasta".format(num=n) for n in split_list]
+    params:
+        nsplit = config["all_cpu"],
+        outdir = outdir+"{accession}/split/"
+    log:
+        outdir+"{accession}/00_LOGS/04__split_files.{accession}.log"
+    threads: 1
+    shell:
+        """
+        fasta-splitter --n-parts {params.nsplit} {input} --out-dir {params.outdir} 2>&1 > {log}
+        """
+
+rule run_prodigal:
+    input:
+        outdir+"{accession}/split/METASPADES_{accession}.scaffolds.part-{num}.fasta"
+    output:
+        multiext(outdir+"{accession}/split/METASPADES_{accession}.scaffolds.part-{num}", ".faa", ".gff", ".fna")
+    params:
+        outdir+"{accession}/split/METASPADES_{accession}.scaffolds.part-{num}",
+    threads: 1
+    shell:
+        """
+        prodigal -i {input} -a {params}.faa -d {params}.fna -f gff -o {params}.gff -q
+        """
+
+rule get_hmm:
+    params:
+        pfam = "{pfam}",
+        outdir = outdir+"{accession}/hmms/",
+    output:
+        outdir+"{accession}/hmms/{pfam}.hmm"#.format(pfam=config['pfam'])
+    shell:
+        """
+        mkdir -p {params.outdir}
+        wget -q -O {output} http://pfam.xfam.org/family/{params.pfam}/hmm
+        """
+
+rule run_hmmer:
+    input:
+        faa = outdir+"{accession}/split/METASPADES_{accession}.scaffolds.part-{num}.faa",
+        pfam = outdir+"{accession}/hmms/{pfam}.hmm"#.format(pfam=config['pfam'])
+    output:
+        outdir+"{accession}/split/METASPADES_{accession}.scaffolds.part-{num}.{pfam}.txt"
+    shell:
+        """
+        hmmsearch -Z 1 --cut_ga --cpu 0 --domtblout {output} {input.pfam} {input.faa} > /dev/null
+        """
+
+rule combine_hmm:
+    input:
+        hmm = [outdir+"{{accession}}/split/METASPADES_{{accession}}.scaffolds.part-{num}.{{pfam}}.txt".format(num=n) for n in split_list],
+    output:
+        raw = outdir+"{accession}/04_ANNOTATION/METASPADES_{accession}.scaffolds.{pfam}.txt",
+        tsv = outdir+"{accession}/04_ANNOTATION/METASPADES_{accession}.scaffolds.{pfam}.tsv",
+    params:
+        bits = config['bits'],
+        evalue = config['evalue'],
+        cov = config['cov'],
+        scripts = scripts,
+    shell:
+        """
+        cat {input.hmm} > {output.raw}
+        python {params.scripts}/HmmPy_mod.py -b {params.bits} -e {params.evalue} -c {params.cov} -o {output.tsv} {output.raw}
+        """
+
+rule combine_files:
+    input:
+        gff = [outdir+"{{accession}}/split/METASPADES_{{accession}}.scaffolds.part-{num}.gff".format(num=n) for n in split_list],
+        faa = [outdir+"{{accession}}/split/METASPADES_{{accession}}.scaffolds.part-{num}.faa".format(num=n) for n in split_list],
+    output:
+        gff = outdir+"{accession}/04_ANNOTATION/METASPADES_{accession}.scaffolds.gff",
+        faa = outdir+"{accession}/04_ANNOTATION/METASPADES_{accession}.scaffolds.faa",
+    shell:
+        """
+        cat {input.faa} > {output.faa}
+        cat {input.gff} | sed 's/;$//;s/^\([^\\t]*\)\(.*ID=\)[0-9]*\(.*\)/\\1\\2\\1\\3/' > {output.gff}
+        """
+
+rule identify_intervals:
+    input:
+        gff = outdir+"{accession}/04_ANNOTATION/METASPADES_{accession}.scaffolds.gff",
+        faa = outdir+"{accession}/04_ANNOTATION/METASPADES_{accession}.scaffolds.faa",
+        tsv = [outdir+"{{accession}}/04_ANNOTATION/METASPADES_{{accession}}.scaffolds.{pfam}.tsv".format(pfam=n) for n in pfam],
+    params:
+        outdir = outdir+"{accession}/05_INTERVALS",
+        interval = config['interval'],
+        scripts = scripts,
+    output:
+        done = outdir+"{accession}/00_LOGS/{accession}.done"
+    shell:
+        """
+        python {params.scripts}/interval_finder.py -g {input.gff} -a {input.faa} -t {input.tsv} -o {params.outdir}
+        touch {output.done}
+        """
+
+
+
+# Next, we want to:
+# - Combine all hmmer files for a given pfam into one
+# - Create an updated GFF file that:
+#    - Combines gff splits
+#    - Updates a new field in the gff description
+#    - Identifies gene coordinates 5' or 3' by some distance
+#    - Spits back out fasta, fna, faa, gff files for each location identified.
+
+# rule combine_all:
+#     input:
+#         ["split/METASPADES_{accession}.scaffolds.part-{num}.fasta".format(accession=sra_acc, num=n) for n in split_list]
+#     output:
+#         "04_ANNOTATION/combined.{accession}.fasta"
+#     shell:
+#         """
+#         cat {input} > {output}
+#        """
+
+
+
+
+
+
+
+
+# This rule runs, but is inefficient because metaspades only utilizes one thread.
+# Will try to debug later, probably needs a pull request to the github repo.
+# rule run_metaspades:
+#     input:
+#         reads=["02_TRIMMED/QC_{accession}_R1.fastq.gz",
+#                "02_TRIMMED/QC_{accession}_R2.fastq.gz"],
+#     output:
+#         contigs="03_ASSEMBLY/{accession}.contigs.fasta",
+#         scaffolds="03_ASSEMBLY/{accession}.scaffolds.fasta",
+#         # dir=directory("03_ASSEMBLY/intermediate_files"),
+#     params:
+#         k="auto",
+#         extra="--only-assembler",
+#     log:
+#         "00_LOGS/03__metaspades.{accession}.log",
+#     threads: 12
+#     resources:
+#         mem_mem=64000,
+#         # time=60 * 24,
+#     wrapper:
+#         "master/bio/spades/metaspades"
