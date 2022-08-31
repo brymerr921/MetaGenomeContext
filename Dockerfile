@@ -16,8 +16,8 @@ RUN conda config --add channels defaults && conda config --add channels bioconda
 RUN mamba install -c conda-forge -c bioconda -c nodefaults sra-tools pigz pbzip2 snakemake-wrapper-utils snakemake-minimal bbmap spades python==3.9 fasta-splitter prodigal hmmer pyfaidx pandas pyranges
 # && conda clean -ay
 
-# COPY . .
-# RUN chmod +rx *
+COPY . .
+RUN chmod -R +rx *
 
 
 # Metadata

@@ -6,7 +6,10 @@ This pipeline can be used to assemble metagenomes and extract contigs containing
 ### Setup
 To run on a local machine, set up the following conda environment:
 ```
-conda create -n mgc -c conda-forge -c bioconda -c nodefaults sra-tools pigz pbzip2 snakemake-wrapper-utils snakemake-minimal bbmap spades python==3.9 fasta-splitter prodigal hmmer pyfaidx pandas pyranges
+conda create -n mgc -c conda-forge -c bioconda -c nodefaults \
+     sra-tools pigz pbzip2 snakemake-wrapper-utils snakemake-minimal \
+     bbmap spades python==3.9 fasta-splitter prodigal hmmer pyfaidx \
+     pandas pyranges
 ```
 
 Next, clone this github repo somewhere on your machine using the following command:  
@@ -17,7 +20,7 @@ git clone https://github.com/brymerr921/MetaGenomeContext.git
 ### Execution
 From here, we can set a few bash variables specifying our input parameters and then run the program.  
 ```
-# Specify which SRR or ERR run you'd like to download -- must be paired-end reads
+# Specify which SRR or ERR run you'd like to download -- must be paired-end reads!
 export accession=ERR1136736
 
 # Specify how many CPUs you have available
@@ -30,7 +33,8 @@ export mem_gb=64
 # Specify which PFAM you'd like to analyze
 export pfam=PF00009
 
-# Specify the interval you'd like to use for genomic context up/downstream of a target gene
+# Specify the interval you'd like to use for genomic context 
+# up/downstream of a target gene
 export interval=5000
 
 # Specify the path to the output directory
@@ -43,14 +47,34 @@ export repo_path=/home/bmerrill/user_data/Projects/github_projects/MetaGenomeCon
 conda activate mgc 
 
 # Run the workflow
-snakemake -p -j $coreNum --resources mem_mb=$mem_mb -s ${repo_path%/}/scripts/Snakefile_MGC --config accession=$accession all_cpu=$coreNum mem_gb=$mem_gb skip_ec='--only-assembler' pfam=$pfam interval=$interval outdir=${outdir%/}/ scripts=${repo_path%/}/scripts --configfile ${repo_path%/}/scripts/config.yaml #-n --debug-dag
+snakemake -p -j $coreNum --resources mem_mb=$mem_mb \
+  -s ${repo_path%/}/scripts/Snakefile_MGC --config accession=$accession \
+  all_cpu=$coreNum mem_gb=$mem_gb skip_ec='--only-assembler' \
+  pfam=$pfam interval=$interval outdir=${outdir%/}/ \
+  scripts=${repo_path%/}/scripts \
+  --configfile ${repo_path%/}/scripts/config.yaml #-n --debug-dag
 ```
-
+You can remove the comment from the `snakemake` command to do a dry run (`-n`) and provide extra context why something isn't working (`--debug-dag`).  
+  
+  
 ## Running on AWS
-
-
+To run on AWS, assuming `awscli` and `aegea` are installed, we just need to generate a submit command. Here's an example one:  
+```
+echo "Submitting ERR1136736 and PF00009 ..." 2>&1 | tee -a AEGEA.log
+aegea batch submit --queue sonn --retry-attempts 3 \
+  --image bmerrill9/metagenomecontext:latest --storage /mnt=500 \
+  --vcpus 16 --memory 64000 \
+  --command="export coreNum=16; export mem_mb=64000; \
+      export accession=ERR1136736; export pfam=PF00009; \
+      export interval=10000; \
+      export DATA_DEST=s3://sonn-current/users/bmerrill/220831_mgc_testing/round1; \
+      ./mgc_wrapper.sh" 2>&1 >> AEGEA.log
+```
+This will place exported files in the path specified by `DATA_DEST`.  
+You can see the expected output below.  
+  
 ## Expected outputs
-Your `outdir` directory should contain the following folders upon successful completion of the workflow.
+Your `outdir` directory should contain the following folders upon successful completion of the workflow.  
 ```
 .
 └── ERR1136736
@@ -118,3 +142,9 @@ Here you'll find one `.faa` and one `.gff` for each interval identified. An inte
 ├── ...
 ```
 
+## Caveats
+There are several caveats/considerations regarding this workflow.  
+  1. Though only currently designed to take in a single `pfam`, some code is in place to provide more than one.  
+  2. Designing a useful output required some concessions to be made. One of these is that proteins containing target pfam domains might lie within `interval` base pairs of each other. One option would be to generate a `.faa` and `.gff` file for each protein and its genomic neighbors regardless of proximity. However, in favor of a simpler output, when two proteins lie within `interval` base pairs of each other, the intervals are merged, and only one is reported.  
+  3. This pipeline utilizes Snakemake within a Docker image that contains all dependencies. Files are generated within the Docker image, and in this case, copied to aws s3 before the container and ec2 instance are shut down. Another way to run this would be to containerize each Snakemake rule and point at cloud storage paths, rather than local storage paths.  
+  4. To facilitate computing these intervals I used the `pyranges` and `pandas` packages. However, these steps are very slow, especially for large assemblies and would greatly benefit from parallelization or more efficient use of these packages.  

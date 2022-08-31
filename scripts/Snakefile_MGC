@@ -29,7 +29,7 @@ rule get_fastq:
         outdir+"{accession}/00_LOGS/01__get_fastq.{accession}.log"
     params:
         extra="--skip-technical"
-    threads: 12
+    threads: config["all_cpu"]
     wrapper:
         "master/bio/sra-tools/fasterq-dump"
 
@@ -44,7 +44,7 @@ rule adapter_and_quality_trim:
         # stdout = SAVE + "00_LOGS/TRIM_MARKED_{sample}.out.txt"
     log:
         outdir+"{accession}/00_LOGS/02__adapter_and_quality_trim.{accession}.log"
-    threads: 12
+    threads: config["all_cpu"]
     params:
         java_ram = config["java_ram"],
         refadpt = config["refadpt"],
