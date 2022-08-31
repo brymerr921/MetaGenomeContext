@@ -29,9 +29,10 @@ DATA_DEST=${DATA_DEST%/}
 snakemake -p -j $coreNum --resources mem_mb=$mem_mb -s $snakefile \
   --config accession=$accession all_cpu=$coreNum mem_gb=$mem_gb \
       skip_ec='--only-assembler' pfam=$pfam interval=$interval outdir=outdir/ \
-      scripts=scripts --configfile $config -n --debug-dag
+      scripts=scripts --configfile $config #-n --debug-dag
 
 cp LATEST outdir/$accession/00_LOGS/VERSION__metagenomecontext
+rm -r outdir/$accession/split/
 
 echo "Syncing data back to S3 ..."
 aws s3 sync outdir/ ${DATA_DEST}/
