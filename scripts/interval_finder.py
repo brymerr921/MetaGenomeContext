@@ -10,7 +10,7 @@ from collections import defaultdict
 
 
 def import_gff(gff):
-    gr = pr.readers.read_gff3(gff, full=True, as_df=False)
+    gr = pr.readers.read_gff3(gff, full=True, as_df=False, nrows=2000)
     return gr
 
 def tsv_to_dict(tsv):
@@ -39,9 +39,9 @@ def add_to_ends(df, **kwargs):
     df.loc[:, "Start"] = df.Start - kwargs["slack"]
     return df
 
-def gen_intervals_df(gr_j, pfam_dict):
-    s = gr_j[gr_j.ID.isin(pfam_dict.keys())]
-    s_add = s.apply(add_to_ends, slack=10000).merge()
+def gen_intervals_df(gr_j, pfam_dict, interval):
+    s = gr[gr.ID.isin(pfam_dict.keys())]
+    s_add = s.apply(add_to_ends, slack=interval).merge()
     return s_add
 
 def gen_intervals_output(gr, s_add, outdir, interval, genes, pfam_df):
@@ -56,11 +56,12 @@ def gen_intervals_output(gr, s_add, outdir, interval, genes, pfam_df):
         out_path = os.path.join(outdir,"interval_{0}.gff".format(int_num))
         df_out = gr[chrm, start:end]
         df_out_j = pd.merge(df_out.df, pfam_df, how="left")
+        df_out_j = pr.PyRanges(df_out_j)
         with open(out_path.replace('gff','faa'),'w') as faa_out:
-            for gene in list(df_out.ID):
+            for gene in list(df_out_j.ID):
                 faa_out.write(">{0}\n".format(genes[gene][:].name))
                 faa_out.write("{0}\n".format(genes[gene][:].seq))
-        df_out.to_gff3(out_path)
+        df_out_j.to_gff3(out_path)
         int_num += 1
         
 if __name__ == "__main__":
@@ -106,7 +107,7 @@ if __name__ == "__main__":
     # gr_j = join_pfams(gr, pfam_dict)
 
     print("Generating interval ranges dataframe")
-    s_add = gen_intervals_df(gr, pfam_dict)
+    s_add = gen_intervals_df(gr, pfam_dict, args.interval)
 
     print("Import faa file for rapid subsetting")
     genes = Fasta(args.faa)
