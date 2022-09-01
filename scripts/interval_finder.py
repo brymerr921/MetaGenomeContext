@@ -10,7 +10,7 @@ from collections import defaultdict
 
 
 def import_gff(gff):
-    gr = pr.readers.read_gff3(gff, full=True, as_df=False, nrows=2000)
+    gr = pr.readers.read_gff3(gff, full=True, as_df=False)
     return gr
 
 def tsv_to_dict(tsv):
